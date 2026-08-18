@@ -4,8 +4,8 @@ import pandas as pd
 from datetime import datetime
 import os
 import time
+import re
 
-# İlettiğin banka listesi ve linkleri
 BANKS = {
     "Akbank (Axess)": "https://www.axess.com.tr/axess/sayfa/1/369/faiz-ve-ucretler",
     "Garanti BBVA": "https://www.garantibbva.com.tr/urun-ve-hizmet-ucretleri",
@@ -19,7 +19,6 @@ BANKS = {
     "Ziraat Bankası": "https://www.ziraatbank.com.tr/tr/urun-ve-hizmet-ucretleri"
 }
 
-# Bot olduğumuzu gizlemek için standart bir tarayıcı kimliği kullanıyoruz
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -28,39 +27,36 @@ HEADERS = {
 
 def scrape_bank_data(bank_name, url):
     try:
-        # Sitelerin bizi engellememesi için her istekte 2 saniye bekliyoruz
         time.sleep(2) 
         response = requests.get(url, headers=HEADERS, timeout=15)
         
-        # Eğer site güvenlik duvarı bizi engellerse
         if response.status_code != 200:
-            return "Güvenlik Duvarı Engeli", f"HTTP Hata Kodu: {response.status_code}"
+            return "Erişim Engeli", f"HTTP Kodu: {response.status_code}"
 
         soup = BeautifulSoup(response.content, 'html.parser')
+        # Görünür metni alıyoruz
+        text_content = soup.get_text(separator=' ', strip=True)
+
+        # Regex ile Yüzdelik oranları bul (Örn: %3,50 veya 4.25%)
+        faiz_oranlari = re.findall(r'%\s?\d+[.,]\d+|\d+[.,]\d+\s?%', text_content)
         
-        # Sayfadaki tüm metni alıp küçük harfe çeviriyoruz
-        text_content = soup.get_text(separator=' ', strip=True).lower()
+        # Regex ile TL tutarlarını bul (Örn: 40 TL, 15,50 TL)
+        ucret_tutarlari = re.findall(r'\d+[.,]?\d*\s?[Tt][Ll]', text_content)
 
-        faiz_sonuc = "Faiz verisi tespit edilemedi"
-        ucret_sonuc = "Ücret verisi tespit edilemedi"
+        # Aynı sayıların tekrarını önle ve sayfadaki ilk 3 farklı oranı al
+        faizler_listesi = list(dict.fromkeys(faiz_oranlari))[:3]
+        ucretler_listesi = list(dict.fromkeys(ucret_tutarlari))[:3]
 
-        # Otomatik fatura anahtar kelimelerini arıyoruz
-        if "otomatik fatura" in text_content or "fatura ödeme" in text_content:
-            if "faiz" in text_content or "akdi" in text_content or "%" in text_content:
-                faiz_sonuc = "Sayfada faiz verisi var (Detay için linke bakınız)"
-            
-            if "ücret" in text_content or "masraf" in text_content or "tl" in text_content:
-                ucret_sonuc = "Sayfada ücret/masraf verisi var (Detay için linke bakınız)"
+        faiz_sonuc = " / ".join(faizler_listesi) if faizler_listesi else "Oran Bulunamadı"
+        ucret_sonuc = " / ".join(ucretler_listesi) if ucretler_listesi else "Tutar Bulunamadı"
 
         return faiz_sonuc, ucret_sonuc
 
-    except requests.exceptions.Timeout:
-        return "Zaman Aşımı (Timeout)", "Site yanıt vermedi"
-    except Exception as e:
-        return "Bağlantı Hatası", "Manuel kontrol ediniz"
+    except Exception:
+        return "Bağlantı Hatası", "Bağlantı Hatası"
 
 def main():
-    print("Bankaların verileri çekiliyor...")
+    print("Bankaların verileri çekiliyor, rakamlar ayıklanıyor...")
     today = datetime.today().strftime('%Y-%m-%d')
     data_list = []
 
@@ -76,22 +72,17 @@ def main():
             "Son Güncelleme": today
         })
 
-    # Veriyi Pandas DataFrame'e çevir
     df_new = pd.DataFrame(data_list)
     file_name = "OFO_Faiz_Oranlari.xlsx"
     
-    # Eski Excel dosyası varsa verileri üstüne yazmadan alta ekle
     if os.path.exists(file_name):
-        print("Mevcut Excel bulundu, yeni veriler altına ekleniyor...")
         df_existing = pd.read_excel(file_name)
         df_final = pd.concat([df_existing, df_new], ignore_index=True)
     else:
-        print("Excel bulunamadı, sıfırdan oluşturuluyor...")
         df_final = df_new
 
-    # Excel formatında kaydet
     df_final.to_excel(file_name, index=False)
-    print(f"İşlem tamamlandı! Veriler {file_name} dosyasına yazıldı.")
+    print("İşlem tamamlandı! Excel oluşturuldu.")
 
 if __name__ == "__main__":
     main()
