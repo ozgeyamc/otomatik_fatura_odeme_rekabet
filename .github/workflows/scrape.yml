@@ -1,0 +1,41 @@
+name: Aylik Banka Verisi Cekme
+
+on:
+  schedule:
+    # Her ayın 20'si saat 06:00'da (UTC) çalışır. (Türkiye saatiyle 09:00)
+    - cron: '0 6 20 * *'
+  workflow_dispatch: # Bu satır sayesinde GitHub sayfasından istediğin zaman manuel olarak butona basıp çalıştırabilirsin.
+
+jobs:
+  scrape-and-update:
+    runs-on: ubuntu-latest
+    
+    # Repo üzerindeki dosyaları değiştirebilmesi için yazma izni veriyoruz
+    permissions:
+      contents: write
+
+    steps:
+      - name: Repoyu Klonla
+        uses: actions/checkout@v3
+
+      - name: Python Kur
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Gerekli Kutuphaneleri Kur
+        run: |
+          pip install -r requirements.txt
+
+      - name: Python Scriptini Calistir
+        run: python scraper.py
+
+      - name: Guncellenen Excel'i Repoya Yukle (Commit)
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add OFO_Faiz_Oranlari.xlsx
+          
+          # Eğer dosyada değişiklik yoksa hata vermemesi için küçük bir kontrol
+          git commit -m "Aylık OFÖ verileri güncellendi: $(date +'%Y-%m-%d')" || echo "Değişiklik yok, commit atlanıyor."
+          git push
