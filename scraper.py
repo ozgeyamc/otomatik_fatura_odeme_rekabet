@@ -2,87 +2,76 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from datetime import datetime
-import os
-import time
-import re
 
-BANKS = {
-    "Akbank (Axess)": "https://www.axess.com.tr/axess/sayfa/1/369/faiz-ve-ucretler",
-    "Garanti BBVA": "https://www.garantibbva.com.tr/urun-ve-hizmet-ucretleri",
-    "Yapı Kredi": "https://www.yapikredi.com.tr/bireysel-bankacilik/hesaplama-araclari/bireysel-urun-ve-hizmet-ucretleri",
-    "İş Bankası": "https://www.isbank.com.tr/urun-ve-hizmet-ucretleri",
-    "DenizBank": "https://www.denizbonus.com/faiz-ve-ucretler",
-    "QNB": "https://www.qnb.com.tr/yasal/urun-hizmet-ucretleri",
-    "TEB": "https://www.teb.com.tr/urun-ve-hizmet-ucretleri/",
-    "Halkbank": "https://www.halkbank.com.tr/tr/urun-ve-hizmet-ucretleri/kredi-kartlari-ve-banka-kartlari",
-    "VakıfBank": "https://www.vakifkart.com.tr/ayricaliklar/firsatlar/otomatik-fatura-odeme",
-    "Ziraat Bankası": "https://www.ziraatbank.com.tr/tr/urun-ve-hizmet-ucretleri"
-}
-
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-}
-
-def scrape_bank_data(bank_name, url):
+def get_garanti_ofo_data():
+    url = "https://www.garantibbva.com.tr/urun-ve-hizmet-ucretleri"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    print("Garanti BBVA sayfası taranıyor...")
+    
     try:
-        time.sleep(2) 
-        response = requests.get(url, headers=HEADERS, timeout=15)
+        response = requests.get(url, headers=headers, timeout=15)
         
         if response.status_code != 200:
-            return "Erişim Engeli", f"HTTP Kodu: {response.status_code}"
+            return "Engellendi (HTTP Hatası)", "-"
 
         soup = BeautifulSoup(response.content, 'html.parser')
-        # Görünür metni alıyoruz
-        text_content = soup.get_text(separator=' ', strip=True)
-
-        # Regex ile Yüzdelik oranları bul (Örn: %3,50 veya 4.25%)
-        faiz_oranlari = re.findall(r'%\s?\d+[.,]\d+|\d+[.,]\d+\s?%', text_content)
         
-        # Regex ile TL tutarlarını bul (Örn: 40 TL, 15,50 TL)
-        ucret_tutarlari = re.findall(r'\d+[.,]?\d*\s?[Tt][Ll]', text_content)
-
-        # Aynı sayıların tekrarını önle ve sayfadaki ilk 3 farklı oranı al
-        faizler_listesi = list(dict.fromkeys(faiz_oranlari))[:3]
-        ucretler_listesi = list(dict.fromkeys(ucret_tutarlari))[:3]
-
-        faiz_sonuc = " / ".join(faizler_listesi) if faizler_listesi else "Oran Bulunamadı"
-        ucret_sonuc = " / ".join(ucretler_listesi) if ucretler_listesi else "Tutar Bulunamadı"
-
-        return faiz_sonuc, ucret_sonuc
-
-    except Exception:
-        return "Bağlantı Hatası", "Bağlantı Hatası"
+        # 1. Sayfadaki tüm tabloları bul
+        tables = soup.find_all('table')
+        
+        for table in tables:
+            # 2. Sadece "otomatik fatura" geçen tabloya odaklan
+            if 'otomatik fatura' in table.text.lower():
+                rows = table.find_all('tr')
+                
+                for row in rows:
+                    cells = row.find_all(['td', 'th'])
+                    
+                    # Eğer satırda hücre yoksa atla
+                    if len(cells) < 2:
+                        continue
+                        
+                    row_text = " ".join([cell.text.strip() for cell in cells]).lower()
+                    
+                    # 3. Kredi kartı ile ilgili satırı yakala
+                    if 'kredi kartı' in row_text and ('faiz' in row_text or 'ücret' in row_text):
+                        # Genellikle 1. hücre işlem adı, 2. veya 3. hücre orandır. 
+                        # Sitenin yapısına göre buradaki indexleri [1] veya [2] olarak değiştirmek gerekebilir.
+                        islem_adi = cells[0].text.strip()
+                        deger = cells[1].text.strip() 
+                        
+                        return islem_adi, deger
+                        
+        return "Sayfada yapı değişmiş, veri bulunamadı", "-"
+        
+    except Exception as e:
+        return f"Bağlantı Hatası: {e}", "-"
 
 def main():
-    print("Bankaların verileri çekiliyor, rakamlar ayıklanıyor...")
     today = datetime.today().strftime('%Y-%m-%d')
-    data_list = []
-
-    for bank, url in BANKS.items():
-        print(f"{bank} taranıyor...")
-        faiz_bilgisi, ucret_bilgisi = scrape_bank_data(bank, url)
-        
-        data_list.append({
-            "Tarih": today,
-            "Banka": bank,
-            "Kredi Kartı ile OFÖ Ödeme Faizi": faiz_bilgisi,
-            "Anlık Ödeme Ücretleri": ucret_bilgisi,
-            "Son Güncelleme": today
-        })
-
-    df_new = pd.DataFrame(data_list)
-    file_name = "OFO_Faiz_Oranlari.xlsx"
+    islem_detayi, rakam = get_garanti_ofo_data()
     
-    if os.path.exists(file_name):
-        df_existing = pd.read_excel(file_name)
-        df_final = pd.concat([df_existing, df_new], ignore_index=True)
-    else:
-        df_final = df_new
-
-    df_final.to_excel(file_name, index=False)
-    print("İşlem tamamlandı! Excel oluşturuldu.")
+    # Çekilen veriyi konsola yazdırarak kontrol edelim
+    print("-" * 30)
+    print(f"Bulunan İşlem: {islem_detayi}")
+    print(f"Bulunan Rakam: {rakam}")
+    print("-" * 30)
+    
+    # Excel'e yazma kısmı
+    data = [{
+        "Tarih": today,
+        "Banka": "Garanti BBVA",
+        "Kredi Kartı ile OFÖ Ödeme Faizi / Ücreti": rakam,
+        "Anlık Ödeme Ücretleri": "Şimdilik test edilmedi",
+        "Son Güncelleme": today
+    }]
+    
+    df = pd.DataFrame(data)
+    df.to_excel("Garanti_Test_OFO.xlsx", index=False)
+    print("Test Excel'i oluşturuldu: Garanti_Test_OFO.xlsx")
 
 if __name__ == "__main__":
     main()
